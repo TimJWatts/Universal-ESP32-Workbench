@@ -240,30 +240,44 @@ Allowed BCM pins: `5, 6, 12, 13, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27`
 
 ### Enter download mode
 
+BOOT must stay held LOW through the entire esptool connection and flash.
+Only release it after flashing completes.
+
 ```bash
 # 1. Hold BOOT LOW
 curl -X POST http://workbench.local:8080/api/gpio/set \
   -H 'Content-Type: application/json' -d '{"pin": 18, "value": 0}'
-sleep 1
+sleep 0.1
 # 2. Pull EN LOW (reset)
 curl -X POST http://workbench.local:8080/api/gpio/set \
   -H 'Content-Type: application/json' -d '{"pin": 17, "value": 0}'
-sleep 0.2
+sleep 0.1
 # 3. Release EN HIGH (ESP32 exits reset, samples BOOT=LOW → download mode)
 curl -X POST http://workbench.local:8080/api/gpio/set \
-  -H 'Content-Type: application/json' -d '{"pin": 17, "value": 1}'
-sleep 0.5
-# 4. Release BOOT HIGH
-curl -X POST http://workbench.local:8080/api/gpio/set \
-  -H 'Content-Type: application/json' -d '{"pin": 18, "value": 1}'
+  -H 'Content-Type: application/json' -d '{"pin": 17, "value": "z"}'
+# BOOT stays held LOW — do NOT release it yet
 ```
 
 ### Flash after GPIO download mode
 
+BOOT is still held LOW from the previous step.
+
 ```bash
-sleep 5  # Wait for USB re-enumeration
+# 1. Flash (BOOT held LOW throughout)
 esptool.py --port "rfc2217://workbench.local:<PORT>?ign_set_control" \
-  --chip esp32s3 --before=no_reset write_flash @flash_args
+  --chip esp32s3 --before=no_reset --after=no_reset \
+  write_flash @flash_args
+
+# 2. Release BOOT HIGH
+curl -X POST http://workbench.local:8080/api/gpio/set \
+  -H 'Content-Type: application/json' -d '{"pin": 18, "value": "z"}'
+
+# 3. Reset into firmware: pulse EN LOW then release HIGH
+curl -X POST http://workbench.local:8080/api/gpio/set \
+  -H 'Content-Type: application/json' -d '{"pin": 17, "value": 0}'
+sleep 0.1
+curl -X POST http://workbench.local:8080/api/gpio/set \
+  -H 'Content-Type: application/json' -d '{"pin": 17, "value": "z"}'
 ```
 
 ### GPIO probe — auto-detect board capabilities
@@ -347,7 +361,7 @@ curl -X POST http://workbench.local:8080/api/serial/recover \
 | `flapping` state | Recovery should start automatically; if stuck, `POST /api/serial/recover` |
 | `recovering` state | USB unbound, recovery in progress — wait for `download_mode` or `idle` |
 | `download_mode` state | Flash firmware on the Pi, then `POST /api/serial/release` |
-| esptool can't connect | Use `POST /api/flash` — never call esptool over RFC2217 directly |
+| esptool can't connect | Use GPIO download mode for boards without working DTR/RTS over RFC2217 (see above); otherwise use `POST /api/flash` |
 | Device crash-looping | Reflash via `POST /api/flash` with working firmware |
 | Board occupies two slots | Onboard USB hub — identify JTAG vs UART via `udevadm info` |
 
