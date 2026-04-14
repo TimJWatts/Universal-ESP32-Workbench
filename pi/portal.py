@@ -446,6 +446,7 @@ def _make_slot(slot_key: str, label: str = None, tcp_port: int = None,
         "_serial_buf": collections.deque(maxlen=SERIAL_BUF_MAXLEN),
         "_tap_fifo": None,
         "_tap_running": False,
+        "_tap_gen": 0,
         "_lock": threading.Lock(),
     }
 
@@ -579,8 +580,9 @@ def _tap_reader(slot: dict) -> None:
     """
     import select as _sel
 
+    my_gen = slot["_tap_gen"]
     fifo_path = slot["_tap_fifo"]
-    while slot.get("_tap_running"):
+    while slot.get("_tap_running") and slot.get("_tap_gen") == my_gen:
         try:
             fd = os.open(fifo_path, os.O_RDONLY | os.O_NONBLOCK)
         except OSError:
@@ -588,7 +590,7 @@ def _tap_reader(slot: dict) -> None:
             continue
         line_buf = b""
         try:
-            while slot.get("_tap_running"):
+            while slot.get("_tap_running") and slot.get("_tap_gen") == my_gen:
                 r, _, _ = _sel.select([fd], [], [], 1.0)
                 if not r:
                     continue
@@ -610,7 +612,7 @@ def _tap_reader(slot: dict) -> None:
                 os.close(fd)
             except OSError:
                 pass
-        if slot.get("_tap_running"):
+        if slot.get("_tap_running") and slot.get("_tap_gen") == my_gen:
             time.sleep(0.5)
 
 
@@ -674,6 +676,7 @@ def start_proxy(slot: dict) -> bool:
                 f"[portal] {label}: proxy started (pid {proc.pid}, port {tcp_port})",
                 flush=True,
             )
+            slot["_tap_gen"] = slot.get("_tap_gen", 0) + 1
             threading.Thread(target=_tap_reader, args=(slot,), daemon=True).start()
             return True
         time.sleep(0.1)
@@ -2140,10 +2143,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         slot["baud_rate"] = baud
         if slot.get("present") and slot.get("running"):
-            with slot["_lock"]:
-                stop_proxy(slot)
-                start_proxy(slot)
-            log_activity(f"{slot_label}: baud rate changed to {baud}", "info")
+            def _do_restart(s=slot):
+                with s["_lock"]:
+                    stop_proxy(s)
+                time.sleep(1.0)
+                with s["_lock"]:
+                    if s.get("present"):
+                        start_proxy(s)
+            threading.Thread(target=_do_restart, daemon=True).start()
+            log_activity(f"{slot_label}: baud rate changing to {baud}", "info")
         self._send_json({"ok": True, "baud": baud})
 
     # -- recovery handlers --
