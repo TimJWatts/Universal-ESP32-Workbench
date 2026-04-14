@@ -436,6 +436,7 @@ def _make_slot(slot_key: str, label: str = None, tcp_port: int = None,
         "url": None,
         "last_error": None,
         "flapping": False,
+        "baud_rate": 115200,
         "state": STATE_ABSENT,
         "_event_times": [],
         "_recovering": False,
@@ -638,7 +639,9 @@ def start_proxy(slot: dict) -> bool:
     slot["_tap_fifo"] = fifo_path
     slot["_tap_running"] = True
 
-    cmd = ["python3", PROXY_EXE, "-p", str(tcp_port), "--tap", fifo_path, devnode]
+    cmd = ["python3", PROXY_EXE, "-p", str(tcp_port),
+           "--baudrate", str(slot.get("baud_rate", 115200)),
+           "--tap", fifo_path, devnode]
 
     try:
         proc = subprocess.Popen(
@@ -1504,6 +1507,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._handle_serial_reset()
         elif path == "/api/serial/monitor":
             self._handle_serial_monitor()
+        elif path == "/api/serial/baudrate":
+            self._handle_serial_baudrate()
         elif path == "/api/serial/recover":
             self._handle_serial_recover()
         elif path == "/api/serial/release":
@@ -2116,6 +2121,30 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if len(result) >= max_lines:
                 break
         self._send_json({"ok": True, "lines": result})
+
+    def _handle_serial_baudrate(self):
+        """POST /api/serial/baudrate {"slot":"SLOT1","baud":9600} — change tap baud rate."""
+        body = self._read_json() or {}
+        slot_label = body.get("slot")
+        baud = body.get("baud")
+        allowed = {9600, 19200, 57600, 74880, 115200, 230400, 460800, 921600}
+        if not slot_label:
+            self._send_json({"ok": False, "error": "missing 'slot' field"}, 400)
+            return
+        if baud not in allowed:
+            self._send_json({"ok": False, "error": f"baud must be one of {sorted(allowed)}"}, 400)
+            return
+        slot = _find_slot_by_label(slot_label)
+        if not slot:
+            self._send_json({"ok": False, "error": f"slot '{slot_label}' not found"})
+            return
+        slot["baud_rate"] = baud
+        if slot.get("present") and slot.get("running"):
+            with slot["_lock"]:
+                stop_proxy(slot)
+                start_proxy(slot)
+            log_activity(f"{slot_label}: baud rate changed to {baud}", "info")
+        self._send_json({"ok": True, "baud": baud})
 
     # -- recovery handlers --
 
@@ -2861,6 +2890,11 @@ _UI_HTML = """\
             color: #2ecc71; font-weight: bold; padding: 6px 10px;
             background: rgba(46,204,113,0.15); border-radius: 4px; margin-top: 8px;
         }
+        .slot-info select {
+            background: #0f3460; color: #ccc; border: 1px solid #333;
+            border-radius: 4px; padding: 1px 4px; font-size: 0.85em; cursor: pointer;
+        }
+        .slot-info select:focus { outline: none; border-color: #00d4ff; }
         .slot-actions { margin-top: 10px; display: flex; gap: 8px; }
         .slot-actions button {
             padding: 6px 14px; border-radius: 6px; cursor: pointer;
@@ -3105,6 +3139,11 @@ function renderSlots(slots) {
                 ${s.detected_chip && s.jtag_slot ? '<div>JTAG: <span>' + s.jtag_slot + (s.jtag_slot === label ? ' (built-in)' : ' (probe)') + '</span></div>' : (s.detected_chip ? '<div>JTAG: <span>none</span></div>' : '')}
                 ${s.debugging ? '<div class="debug-active">Debug: <span>GDB :' + s.debug_gdb_port + '</span></div>' : (s.detected_chip ? '<div class="debug-idle">Debug: <span>idle</span></div>' : '')}
                 ${(s.usb_devices || []).map(d => '<div class="usb-device">USB: <span>' + d.product + '</span></div>').join('')}
+                <div>Baud: <select onchange="setBaudRate('${label}', this.value)">${
+                    [9600,19200,57600,74880,115200,230400,460800,921600].map(b =>
+                        `<option value="${b}"${b === (s.baud_rate || 115200) ? ' selected' : ''}>${b}</option>`
+                    ).join('')
+                }</select></div>
             </div>
             <div class="url-box ${s.running || st === 'idle' || st === 'download_mode' ? '' : 'empty'}"
                  onclick="${s.running || st === 'idle' ? "copyUrl('" + copyTarget + "',this)" : ''}">
@@ -3389,6 +3428,16 @@ async function fetchTestProgress() {
                 + (r.details ? '<span style="color:#666"> — ' + r.details + '</span>' : '')
                 + '</div>';
         }).join('');
+    } catch (e) { /* ignore */ }
+}
+
+async function setBaudRate(label, baud) {
+    try {
+        await fetch('/api/serial/baudrate', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({slot: label, baud: parseInt(baud)})
+        });
     } catch (e) { /* ignore */ }
 }
 

@@ -39,6 +39,8 @@ def main():
                         action="count", default=0)
     parser.add_argument("--tap", default=None, metavar="PATH",
                         help="FIFO path to copy all received serial bytes into")
+    parser.add_argument("--baudrate", type=int, default=115200,
+                        help="Initial serial baud rate (default 115200)")
     args = parser.parse_args()
 
     level = (logging.WARNING, logging.INFO, logging.DEBUG, logging.NOTSET)[
@@ -49,7 +51,7 @@ def main():
 
     ser = serial.serial_for_url(args.SERIALPORT, do_not_open=True,
                                 exclusive=False)
-    ser.baudrate = 115200  # default for ESP32 serial console; RFC2217 clients can override
+    ser.baudrate = args.baudrate  # RFC2217 clients can override via SET_BAUDRATE
     ser.timeout = 0.1  # short timeout keeps the reader thread responsive
     ser.dtr = False
     ser.rts = False
