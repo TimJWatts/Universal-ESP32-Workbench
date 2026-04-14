@@ -49,7 +49,7 @@ def main():
 
     ser = serial.serial_for_url(args.SERIALPORT, do_not_open=True,
                                 exclusive=False)
-    ser.timeout = 3
+    ser.timeout = 0.1  # short timeout keeps the reader thread responsive
     ser.dtr = False
     ser.rts = False
     ser.open()
@@ -87,6 +87,37 @@ def main():
     logging.info("Listening on port %d for %s", args.localport,
                  args.SERIALPORT)
 
+    # Shared state: the currently connected RFC2217 client.
+    # The reader thread runs continuously and forwards to the client when present.
+    client_lock = threading.Lock()
+    client_conn = [None]   # socket or None
+    client_pm = [None]     # PortManager or None
+
+    def reader():
+        """Always-on serial reader: taps to FIFO and forwards to RFC2217 client."""
+        while True:
+            try:
+                data = ser.read(ser.in_waiting or 1)
+                if not data:
+                    continue
+                if tap_fd is not None:
+                    try:
+                        os.write(tap_fd, data)
+                    except OSError:
+                        pass
+                with client_lock:
+                    conn = client_conn[0]
+                    pm = client_pm[0]
+                    if conn is not None and pm is not None:
+                        try:
+                            conn.sendall(b"".join(pm.escape(data)))
+                        except OSError:
+                            pass
+            except Exception:
+                break
+
+    threading.Thread(target=reader, daemon=True).start()
+
     while True:
         srv.settimeout(5)
         conn = None
@@ -120,29 +151,12 @@ def main():
             conn.close()
             continue
 
-        alive = True
-
-        def reader():
-            nonlocal alive
-            while alive:
-                try:
-                    data = ser.read(ser.in_waiting or 1)
-                    if data:
-                        conn.sendall(b"".join(pm.escape(data)))
-                        if tap_fd is not None:
-                            try:
-                                os.write(tap_fd, data)
-                            except OSError:
-                                pass
-                except Exception:
-                    break
-            alive = False
-
-        t = threading.Thread(target=reader, daemon=True)
-        t.start()
+        with client_lock:
+            client_conn[0] = conn
+            client_pm[0] = pm
 
         try:
-            while alive:
+            while True:
                 data = conn.recv(1024)
                 if not data:
                     break
@@ -150,7 +164,10 @@ def main():
         except Exception:
             pass
 
-        alive = False
+        with client_lock:
+            client_conn[0] = None
+            client_pm[0] = None
+
         conn.close()
         logging.info("Client disconnected")
         ser.dtr = False
