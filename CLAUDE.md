@@ -1,3 +1,7 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
 # Universal-ESP32-Tester
 
 Raspberry Pi-based test instrument for ESP32 firmware: serial proxy (RFC2217), WiFi AP/STA, GPIO control, HTTP relay, all via REST API.
@@ -15,21 +19,25 @@ Raspberry Pi-based test instrument for ESP32 firmware: serial proxy (RFC2217), W
 pi/
   portal.py                   # Web portal + API + proxy supervisor (main entry)
   wifi_controller.py          # WiFi instrument (AP, STA, scan, relay)
-  plain_rfc2217_server.py     # RFC2217 server with DTR/RTS passthrough
-  install.sh                  # Pi installer
-  config/slots.json           # Slot-to-port mapping
-  udev/                       # udev rules for hotplug
+  ble_controller.py           # BLE scan/connect/write backend (bleak)
+  debug_controller.py         # GDB debug manager (OpenOCD lifecycle, probe allocation)
+  mqtt_controller.py          # MQTT broker controller (mosquitto)
   cw_beacon.py                # CW beacon (GPCLK Morse transmitter for DF testing)
+  plain_rfc2217_server.py     # RFC2217 server with DTR/RTS passthrough
+  serial_proxy.py             # Serial proxy helper
+  install.sh                  # Pi installer
+  config/workbench.json       # Hardware config template (slots, GPIO pins, debug probes)
+  udev/                       # udev rules for hotplug
+  scripts/                    # udev and dnsmasq callback scripts
   systemd/                    # systemd service unit
 pytest/
-  workbench_driver.py   # WorkbenchDriver class for test scripts
-  conftest.py                 # pytest fixtures
+  workbench_driver.py         # WorkbenchDriver class for test scripts
+  conftest.py                 # pytest fixtures (--wt-url, --run-dut)
   workbench_test.py           # End-to-end workbench tests
 docs/
   Embedded-Workbench-FSD.md  # Full functional specification
 container/                    # Alternate devcontainer config
-skills/esp32-test-harness/    # Claude Code skill
-skills/cw-beacon/             # CW beacon skill (GPCLK Morse for DF testing)
+.claude/skills/               # Claude Code skills for this project
 ```
 
 ## Commands
@@ -44,12 +52,19 @@ rfc2217-learn-slots
 # Run portal manually
 python3 pi/portal.py
 
-# Run tests
+# Run all tests (requires Pi reachable)
 pip install -r requirements-dev.txt
-pytest pytest/
+pytest pytest/ --wt-url http://workbench.local:8080
 
-# Lint
+# Run a single test
+pytest pytest/workbench_test.py::test_name --wt-url http://workbench.local:8080
+
+# Run tests that require a connected DUT
+pytest pytest/ --wt-url http://workbench.local:8080 --run-dut
+
+# Lint and format
 ruff check .
+ruff format .
 mypy --strict .
 ```
 
@@ -74,9 +89,28 @@ mypy --strict .
 - Always release GPIO pins after use: `gpio_set(pin, "z")`
 - One RFC2217 client per serial device at a time
 - ESP32-C3 reset: use `POST /api/serial/reset` or `--after=no-reset` with esptool
-- Environment variable `SERIAL_PI=192.168.0.87` set in devcontainer
-- Deploy portal to Pi: `scp pi/portal.py pi@192.168.0.87:/tmp/portal.py && ssh pi@192.168.0.87 'sudo cp /tmp/portal.py /usr/local/bin/rfc2217-portal && sudo systemctl restart rfc2217-portal'`
-- Deploy debug_controller: `scp pi/debug_controller.py pi@192.168.0.87:/tmp/ && ssh pi@192.168.0.87 'sudo cp /tmp/debug_controller.py /usr/local/bin/debug_controller.py && sudo systemctl restart rfc2217-portal'`
+- Environment variables: `SERIAL_PI=192.168.0.87` and `WORKBENCH_URL=http://192.168.0.87:8080` set in devcontainer
+- Pi is reachable as `workbench.local` via mDNS on the LAN
+- Hardware config lives at `/etc/rfc2217/workbench.json` on the Pi; `pi/config/workbench.json` is the template
+- Deploy Pi files: `scp pi/<file>.py pi@192.168.0.87:/tmp/ && ssh pi@192.168.0.87 'sudo cp /tmp/<file>.py /usr/local/bin/<file>.py && sudo systemctl restart rfc2217-portal'`
+- Portal imports all controllers at startup; deploy portal.py last after updating controllers
+
+## Slot States
+
+Each slot in `/api/devices` reports a `state` field:
+
+| State | Meaning |
+|-------|---------|
+| `absent` | No USB device plugged in |
+| `idle` | Device present, RFC2217 proxy running, no client connected |
+| `resetting` | DTR/RTS reset in progress |
+| `monitoring` | Serial monitor session active |
+| `flapping` | Rapid USB connect/disconnect storm detected |
+| `recovering` | Auto-recovery in progress (unbind USB → download mode via GPIO) |
+| `download_mode` | Device held in bootloader waiting to be flashed |
+| `debugging` | OpenOCD active (normal operating state alongside serial) |
+
+`recovering` leads to `download_mode` (GPIO wired) or `idle` (no GPIO). `download_mode` exits via `POST /api/serial/release`.
 
 ## Flashing
 
