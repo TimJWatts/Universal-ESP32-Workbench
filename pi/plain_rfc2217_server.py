@@ -49,6 +49,7 @@ def main():
 
     ser = serial.serial_for_url(args.SERIALPORT, do_not_open=True,
                                 exclusive=False)
+    ser.baudrate = 115200  # default for ESP32 serial console; RFC2217 clients can override
     ser.timeout = 0.1  # short timeout keeps the reader thread responsive
     ser.dtr = False
     ser.rts = False
