@@ -20,6 +20,7 @@ of esp_rfc2217_server automatically.
 """
 import argparse
 import logging
+import os
 import socket
 import termios
 import threading
@@ -36,6 +37,8 @@ def main():
     parser.add_argument("-p", "--localport", type=int, default=2217)
     parser.add_argument("-v", "--verbose", dest="verbosity",
                         action="count", default=0)
+    parser.add_argument("--tap", default=None, metavar="PATH",
+                        help="FIFO path to copy all received serial bytes into")
     args = parser.parse_args()
 
     level = (logging.WARNING, logging.INFO, logging.DEBUG, logging.NOTSET)[
@@ -67,6 +70,15 @@ def main():
     ser.rts = False          # Release reset — chip boots normally
     time.sleep(0.1)
     settings = ser.get_settings()
+
+    # Open tap FIFO for writing (O_RDWR so it succeeds without a reader present;
+    # O_NONBLOCK so writes never stall if the portal's ring buffer is full).
+    tap_fd = None
+    if args.tap:
+        try:
+            tap_fd = os.open(args.tap, os.O_RDWR | os.O_NONBLOCK)
+        except OSError as e:
+            logging.warning("Cannot open tap FIFO %s: %s", args.tap, e)
 
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -117,6 +129,11 @@ def main():
                     data = ser.read(ser.in_waiting or 1)
                     if data:
                         conn.sendall(b"".join(pm.escape(data)))
+                        if tap_fd is not None:
+                            try:
+                                os.write(tap_fd, data)
+                            except OSError:
+                                pass
                 except Exception:
                     break
             alive = False

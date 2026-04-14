@@ -66,7 +66,7 @@ hostname: str = "localhost"
 
 # Activity log — recent operations visible in UI
 import collections
-activity_log: collections.deque = collections.deque(maxlen=200)
+activity_log: collections.deque = collections.deque(maxlen=1000)
 _enter_portal_running: bool = False
 
 # Human interaction — test scripts block on POST /api/human-interaction
@@ -443,6 +443,8 @@ def _make_slot(slot_key: str, label: str = None, tcp_port: int = None,
         "_auto_debug_chip": None,
         "_jtag_slot": None,  # slot label providing JTAG (own or probe)
         "_serial_buf": collections.deque(maxlen=SERIAL_BUF_MAXLEN),
+        "_tap_fifo": None,
+        "_tap_running": False,
         "_lock": threading.Lock(),
     }
 
@@ -567,6 +569,50 @@ def _pick_best_devnode(slot: dict) -> str:
     return slot["devnode"]
 
 
+def _tap_reader(slot: dict) -> None:
+    """Background thread: read from the per-slot FIFO tap and populate _serial_buf.
+
+    The FIFO write end is held by plain_rfc2217_server with O_RDWR so we never
+    see EOF while the proxy is alive.  When the proxy stops the write end closes
+    and we get an empty read; we then reopen and wait for the next proxy start.
+    """
+    import select as _sel
+
+    fifo_path = slot["_tap_fifo"]
+    while slot.get("_tap_running"):
+        try:
+            fd = os.open(fifo_path, os.O_RDONLY | os.O_NONBLOCK)
+        except OSError:
+            time.sleep(1)
+            continue
+        line_buf = b""
+        try:
+            while slot.get("_tap_running"):
+                r, _, _ = _sel.select([fd], [], [], 1.0)
+                if not r:
+                    continue
+                try:
+                    data = os.read(fd, 4096)
+                except BlockingIOError:
+                    continue
+                if not data:
+                    break  # proxy closed write end — reopen after brief pause
+                line_buf += data
+                now = time.time()
+                while b"\n" in line_buf:
+                    line, line_buf = line_buf.split(b"\n", 1)
+                    text = line.decode("utf-8", errors="replace").strip()
+                    if text:
+                        slot["_serial_buf"].append({"ts": now, "text": text})
+        finally:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        if slot.get("_tap_running"):
+            time.sleep(0.5)
+
+
 def start_proxy(slot: dict) -> bool:
     """Start plain_rfc2217_server for *slot*.  Returns True on success."""
     devnode = slot["devnode"]
@@ -584,7 +630,15 @@ def start_proxy(slot: dict) -> bool:
         print(f"[portal] {label}: {slot['last_error']}", flush=True)
         return False
 
-    cmd = ["python3", PROXY_EXE, "-p", str(tcp_port), devnode]
+    fifo_path = f"/tmp/rfc2217_tap_{label}"
+    try:
+        os.mkfifo(fifo_path)
+    except FileExistsError:
+        pass
+    slot["_tap_fifo"] = fifo_path
+    slot["_tap_running"] = True
+
+    cmd = ["python3", PROXY_EXE, "-p", str(tcp_port), "--tap", fifo_path, devnode]
 
     try:
         proc = subprocess.Popen(
@@ -617,11 +671,13 @@ def start_proxy(slot: dict) -> bool:
                 f"[portal] {label}: proxy started (pid {proc.pid}, port {tcp_port})",
                 flush=True,
             )
+            threading.Thread(target=_tap_reader, args=(slot,), daemon=True).start()
             return True
         time.sleep(0.1)
 
     # Port never came up — kill the process
     _stop_pid(proc.pid)
+    slot["_tap_running"] = False
     slot["last_error"] = "Proxy started but port not listening"
     print(f"[portal] {label}: {slot['last_error']}", flush=True)
     return False
@@ -655,6 +711,13 @@ def stop_proxy(slot: dict) -> bool:
     slot["pid"] = None
     slot["url"] = None
     slot["last_error"] = None
+    slot["_tap_running"] = False
+    if slot.get("_tap_fifo"):
+        try:
+            os.unlink(slot["_tap_fifo"])
+        except OSError:
+            pass
+        slot["_tap_fifo"] = None
     return True
 
 
@@ -2808,7 +2871,20 @@ _UI_HTML = """\
         .btn-recover { background: #e67e22; color: #fff; }
         .btn-recover:hover { background: #d35400; }
         .info { text-align: center; color: #666; margin-top: 30px; font-size: 0.85em; }
-        /* Activity log */
+        /* Output window source selector */
+        .log-source-bar {
+            display: flex; gap: 8px; flex-wrap: wrap;
+            margin-bottom: 10px; flex-shrink: 0;
+        }
+        .src-btn {
+            background: #0f3460; color: #aaa; border: 1px solid #333;
+            padding: 6px 14px; border-radius: 6px; cursor: pointer;
+            font-size: 0.85em; transition: all 0.2s;
+        }
+        .src-btn:hover { background: #1a4a7a; color: #eee; }
+        .src-btn.active { background: #00d4ff; color: #1a1a2e; border-color: #00d4ff; font-weight: bold; }
+        .src-btn.absent { opacity: 0.45; }
+        /* Output window */
         .log-section {
             margin: 20px 0 0;
             background: #16213e; border-radius: 12px; padding: 20px;
@@ -2822,13 +2898,14 @@ _UI_HTML = """\
             flex: 1; overflow-y: auto; font-family: monospace;
             font-size: 0.82em; line-height: 1.6;
         }
-        .log-entries:empty::after { content: 'No activity yet'; color: #555; }
+        .log-entries:empty::after { content: 'No output yet'; color: #555; }
         .log-entry { white-space: pre-wrap; word-break: break-all; }
         .log-entry .ts { color: #555; }
         .log-entry.cat-info { color: #aaa; }
         .log-entry.cat-step { color: #00d4ff; }
         .log-entry.cat-ok { color: #2ecc71; }
         .log-entry.cat-error { color: #ff6b6b; }
+        .log-entry.cat-serial { color: #e0e0e0; }
         .log-actions { margin-top: 10px; display: flex; gap: 8px; }
         .log-actions button {
             background: #0f3460; color: #aaa; border: 1px solid #333;
@@ -2916,7 +2993,9 @@ _UI_HTML = """\
         </div>
     </div>
     <div class="log-section">
-        <h2>Activity Log</h2>
+        <div class="log-source-bar" id="log-source-bar">
+            <button class="src-btn active" onclick="setLogSource('log')">Activity Log</button>
+        </div>
         <div class="log-entries" id="log-entries"></div>
         <div class="log-actions">
             <button onclick="clearLog()">Clear</button>
@@ -2956,6 +3035,7 @@ async function fetchDevices() {
             document.getElementById('subtitle').textContent = gpio;
         }
         renderSlots(data.slots);
+        updateSourceBar(data.slots);
         document.getElementById('info').textContent =
             'Hostname: ' + hostName + '  |  IP: ' + hostIp + '  |  Auto-refresh every 5s';
     } catch (e) {
@@ -3045,9 +3125,43 @@ function copyUrl(url, el) {
     setTimeout(() => { el.classList.remove('copied'); el.textContent = url; }, 1000);
 }
 
+let logSource = 'log';
 let lastLogTs = '';
+let lastSerialTs = {};
+let allSlots = [];
+
+function escapeHtml(s) {
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function updateSourceBar(slots) {
+    allSlots = slots;
+    const bar = document.getElementById('log-source-bar');
+    let html = '<button class="src-btn' + (logSource === 'log' ? ' active' : '') +
+        '" onclick="setLogSource(\'log\')">Activity Log</button>';
+    for (const s of slots) {
+        const absent = s.state === 'absent';
+        const active = logSource === s.label;
+        html += '<button class="src-btn' + (active ? ' active' : '') + (absent ? ' absent' : '') +
+            '" onclick="setLogSource(\'' + s.label + '\')">' + s.label + '</button>';
+    }
+    bar.innerHTML = html;
+}
+
+function setLogSource(src) {
+    logSource = src;
+    document.getElementById('log-entries').innerHTML = '';
+    if (src === 'log') {
+        lastLogTs = '';
+    } else {
+        lastSerialTs[src] = 0;
+    }
+    updateSourceBar(allSlots);
+    fetchActiveSource();
+}
 
 async function fetchLog() {
+    if (logSource !== 'log') return;
     try {
         const url = lastLogTs ? '/api/log?since=' + encodeURIComponent(lastLogTs) : '/api/log';
         const resp = await fetch(url);
@@ -3058,14 +3172,40 @@ async function fetchLog() {
                 const div = document.createElement('div');
                 div.className = 'log-entry cat-' + (e.cat || 'info');
                 const t = new Date(e.ts);
-                const ts = t.toLocaleTimeString();
-                div.innerHTML = '<span class="ts">' + ts + '</span> ' + e.msg;
+                div.innerHTML = '<span class="ts">' + t.toLocaleTimeString() + '</span> ' + e.msg;
                 el.appendChild(div);
                 lastLogTs = e.ts;
             }
             el.scrollTop = el.scrollHeight;
         }
     } catch (e) { /* ignore */ }
+}
+
+async function fetchSerialOutput() {
+    if (logSource === 'log') return;
+    const slot = logSource;
+    const since = lastSerialTs[slot] || 0;
+    try {
+        const resp = await fetch('/api/serial/output?slot=' + slot + '&lines=200&since=' + since);
+        const data = await resp.json();
+        if (data.lines && data.lines.length > 0) {
+            const el = document.getElementById('log-entries');
+            for (const e of data.lines) {
+                const div = document.createElement('div');
+                div.className = 'log-entry cat-serial';
+                const t = new Date(e.ts * 1000);
+                div.innerHTML = '<span class="ts">' + t.toLocaleTimeString() + '</span> ' + escapeHtml(e.text);
+                el.appendChild(div);
+                lastSerialTs[slot] = e.ts;
+            }
+            el.scrollTop = el.scrollHeight;
+        }
+    } catch (e) { /* ignore */ }
+}
+
+function fetchActiveSource() {
+    if (logSource === 'log') return fetchLog();
+    return fetchSerialOutput();
 }
 
 async function enterPortal() {
@@ -3097,7 +3237,11 @@ async function enterPortal() {
 
 function clearLog() {
     document.getElementById('log-entries').innerHTML = '';
-    lastLogTs = '';
+    if (logSource === 'log') {
+        lastLogTs = '';
+    } else {
+        lastSerialTs[logSource] = Date.now() / 1000;
+    }
 }
 
 async function releaseSlot(label) {
@@ -3249,7 +3393,7 @@ async function fetchTestProgress() {
 }
 
 async function refresh() {
-    await Promise.all([fetchDevices(), fetchLog(), fetchHuman(), fetchTestProgress()]);
+    await Promise.all([fetchDevices(), fetchActiveSource(), fetchHuman(), fetchTestProgress()]);
 }
 refresh();
 setInterval(refresh, 5000);
