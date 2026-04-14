@@ -3137,15 +3137,15 @@ function escapeHtml(s) {
 function updateSourceBar(slots) {
     allSlots = slots;
     const bar = document.getElementById('log-source-bar');
-    let html = '<button class="src-btn' + (logSource === 'log' ? ' active' : '') +
-        '" onclick="setLogSource(\'log\')">Activity Log</button>';
+    const parts = [];
+    const logActive = logSource === 'log' ? ' active' : '';
+    parts.push(`<button class="src-btn${logActive}" onclick="setLogSource('log')">Activity Log</button>`);
     for (const s of slots) {
-        const absent = s.state === 'absent';
-        const active = logSource === s.label;
-        html += '<button class="src-btn' + (active ? ' active' : '') + (absent ? ' absent' : '') +
-            '" onclick="setLogSource(\'' + s.label + '\')">' + s.label + '</button>';
+        const active = logSource === s.label ? ' active' : '';
+        const absent = s.state === 'absent' ? ' absent' : '';
+        parts.push(`<button class="src-btn${active}${absent}" onclick="setLogSource('${s.label}')">${s.label}</button>`);
     }
-    bar.innerHTML = html;
+    bar.innerHTML = parts.join('');
 }
 
 function setLogSource(src) {
