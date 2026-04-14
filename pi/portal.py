@@ -710,9 +710,8 @@ def stop_proxy(slot: dict) -> bool:
     """Stop proxy for *slot*.  Returns True if stopped (or already stopped)."""
     label = slot["label"]
     pid = slot["pid"]
-    if pid and _is_process_alive(pid):
-        print(f"[portal] {label}: stopping proxy (pid {pid})", flush=True)
-        _stop_pid(pid)
+    # Reset visible state FIRST so _refresh_slot_health can't observe the
+    # window between process death and slot["running"] = False.
     slot["running"] = False
     slot["pid"] = None
     slot["url"] = None
@@ -724,6 +723,9 @@ def stop_proxy(slot: dict) -> bool:
         except OSError:
             pass
         slot["_tap_fifo"] = None
+    if pid and _is_process_alive(pid):
+        print(f"[portal] {label}: stopping proxy (pid {pid})", flush=True)
+        _stop_pid(pid)
     return True
 
 
@@ -2142,14 +2144,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._send_json({"ok": False, "error": f"slot '{slot_label}' not found"})
             return
         slot["baud_rate"] = baud
+        slot["_serial_buf"].clear()   # discard bytes captured at old baud rate
         if slot.get("present") and slot.get("running"):
             def _do_restart(s=slot):
                 with s["_lock"]:
                     stop_proxy(s)
-                time.sleep(1.0)
-                with s["_lock"]:
-                    if s.get("present"):
-                        start_proxy(s)
+                    start_proxy(s)
             threading.Thread(target=_do_restart, daemon=True).start()
             log_activity(f"{slot_label}: baud rate changing to {baud}", "info")
         self._send_json({"ok": True, "baud": baud})
@@ -3441,11 +3441,14 @@ async function fetchTestProgress() {
 
 async function setBaudRate(label, baud) {
     try {
-        await fetch('/api/serial/baudrate', {
+        const r = await fetch('/api/serial/baudrate', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({slot: label, baud: parseInt(baud)})
         });
+        const data = await r.json();
+        if (!data.ok) { alert('Baud rate change failed: ' + data.error); return; }
+        if (logSource === label) setLogSource(label);
     } catch (e) { /* ignore */ }
 }
 
