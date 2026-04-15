@@ -2940,11 +2940,11 @@ _UI_HTML = """\
             display: flex; flex-direction: column;
             flex: 1; min-height: 0;
         }
-        .log-section h2 { margin: 0 0 10px; font-size: 1.1em; color: #eee; flex-shrink: 0; }
         .log-entries {
             background: #0a0a1a; border-radius: 8px; padding: 10px;
-            flex: 1; min-height: 0; overflow-y: auto; font-family: monospace;
+            overflow-y: auto; font-family: monospace;
             font-size: 0.82em; line-height: 1.6;
+            /* height set by sizeLogEntries() */
         }
         .log-entries:empty::after { content: 'No output yet'; color: #555; }
         .log-entry { white-space: pre-wrap; word-break: break-all; }
