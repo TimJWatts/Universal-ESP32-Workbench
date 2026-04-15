@@ -2144,11 +2144,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._send_json({"ok": False, "error": f"slot '{slot_label}' not found"})
             return
         slot["baud_rate"] = baud
-        slot["_serial_buf"].clear()   # discard bytes captured at old baud rate
+        slot["_serial_buf"].clear()   # immediate UI clear at old baud rate
         if slot.get("present") and slot.get("running"):
             def _do_restart(s=slot):
                 with s["_lock"]:
                     stop_proxy(s)
+                    # Second clear: catches any bytes the old reader appended
+                    # between the first clear and stop_proxy killing the proxy
+                    # (the reader may still be draining the FIFO pipe buffer).
+                    s["_serial_buf"].clear()
                     start_proxy(s)
             threading.Thread(target=_do_restart, daemon=True).start()
             log_activity(f"{slot_label}: baud rate changing to {baud}", "info")
