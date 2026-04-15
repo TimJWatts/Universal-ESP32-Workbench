@@ -2942,7 +2942,7 @@ _UI_HTML = """\
         .log-section h2 { margin: 0 0 10px; font-size: 1.1em; color: #eee; flex-shrink: 0; }
         .log-entries {
             background: #0a0a1a; border-radius: 8px; padding: 10px;
-            flex: 1; overflow-y: auto; font-family: monospace;
+            flex: 1; min-height: 0; overflow-y: auto; font-family: monospace;
             font-size: 0.82em; line-height: 1.6;
         }
         .log-entries:empty::after { content: 'No output yet'; color: #555; }
