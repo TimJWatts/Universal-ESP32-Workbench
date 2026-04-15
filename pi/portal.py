@@ -2819,10 +2819,16 @@ _UI_HTML = """\
             overflow: hidden;
             padding: 20px;
             display: flex; flex-direction: column;
+            position: relative;
         }
         h1 { text-align: center; margin-bottom: 5px; color: #00d4ff; }
         .subtitle { text-align: center; color: #aaa; font-size: 1.2em; margin-bottom: 20px; font-family: monospace; }
         h2 { color: #00d4ff; margin: 9px 0 15px; text-align: center; }
+        #refresh-control { position: absolute; top: 20px; right: 20px; font-size: 0.85em; color: #aaa; }
+        #refresh-control select {
+            background: #16213e; color: #00d4ff; border: 1px solid #0f3460;
+            border-radius: 4px; padding: 2px 4px; font-size: inherit;
+        }
         .main-content {
             max-width: 1600px; margin: 0 auto; width: 100%;
             display: flex; flex-direction: column; flex: 1; min-height: 0;
@@ -3026,6 +3032,13 @@ _UI_HTML = """\
     </style>
 </head>
 <body>
+    <div id="refresh-control">Refresh: <select id="refresh-select" onchange="setRefreshInterval(this.value)">
+        <option value="1">1s</option><option value="2">2s</option>
+        <option value="3">3s</option><option value="4">4s</option>
+        <option value="5" selected>5s</option><option value="6">6s</option>
+        <option value="7">7s</option><option value="8">8s</option>
+        <option value="9">9s</option><option value="10">10s</option>
+    </select></div>
     <h1 id="title">RFC2217 Embedded Workbench</h1>
     <div class="subtitle" id="subtitle"></div>
     <div class="main-content">
@@ -3088,7 +3101,7 @@ async function fetchDevices() {
         renderSlots(data.slots);
         updateSourceBar(data.slots);
         document.getElementById('info').textContent =
-            'Hostname: ' + hostName + '  |  IP: ' + hostIp + '  |  Auto-refresh every 5s';
+            'Hostname: ' + hostName + '  |  IP: ' + hostIp + '  |  Auto-refresh every ' + refreshSecs + 's';
     } catch (e) {
         console.error('Error fetching devices:', e);
     }
@@ -3493,8 +3506,18 @@ async function refresh() {
     await Promise.all([fetchDevices(), fetchActiveSource(), fetchHuman(), fetchTestProgress()]);
     sizeLogEntries();
 }
+let refreshSecs = parseInt(localStorage.getItem('refreshInterval') || '5');
+document.getElementById('refresh-select').value = refreshSecs;
+
+function setRefreshInterval(val) {
+    refreshSecs = parseInt(val);
+    localStorage.setItem('refreshInterval', refreshSecs);
+    clearInterval(_refreshTimer);
+    _refreshTimer = setInterval(refresh, refreshSecs * 1000);
+}
+
 refresh();
-setInterval(refresh, 5000);
+let _refreshTimer = setInterval(refresh, refreshSecs * 1000);
 sizeLogEntries();
 </script>
 </body>
