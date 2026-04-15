@@ -2822,7 +2822,7 @@ _UI_HTML = """\
         }
         h1 { text-align: center; margin-bottom: 5px; color: #00d4ff; }
         .subtitle { text-align: center; color: #aaa; font-size: 1.2em; margin-bottom: 20px; font-family: monospace; }
-        h2 { color: #00d4ff; margin: 30px 0 15px; text-align: center; }
+        h2 { color: #00d4ff; margin: 9px 0 15px; text-align: center; }
         .main-content {
             max-width: 1600px; margin: 0 auto; width: 100%;
             display: flex; flex-direction: column; flex: 1; min-height: 0;
@@ -2875,6 +2875,9 @@ _UI_HTML = """\
         .slot-info { font-size: 0.9em; color: #aaa; margin-bottom: 15px; }
         .slot-info div { margin: 5px 0; }
         .slot-info span { color: #00d4ff; font-family: monospace; }
+        .usb-baud-row { display: flex; justify-content: space-between; align-items: center; }
+        .usb-baud-row div { margin: 0; }
+        .baud-row-right { display: flex; justify-content: flex-end; }
         .url-box {
             background: #0f3460; padding: 10px; border-radius: 8px;
             font-family: monospace; font-size: 0.9em;
@@ -2995,7 +2998,7 @@ _UI_HTML = """\
         }
         .human-modal .btn-cancel:hover { background: #666; }
         /* Test progress panel */
-        .test-section { margin: 20px 0 0; flex-shrink: 0; }
+        .test-section { margin: 6px 0 0; flex-shrink: 0; }
         .test-progress { background: #16213e; border-radius: 12px; padding: 20px; border: 2px solid #0f3460; }
         .test-header { font-size: 1.1em; color: #e0e0e0; margin-bottom: 10px; }
         .test-bar-container { background: #333; border-radius: 6px; height: 24px; margin-bottom: 12px; position: relative; overflow: hidden; }
@@ -3139,6 +3142,15 @@ function renderSlots(slots) {
                 '<button class="btn-recover" onclick="recoverSlot(\\'' + label + '\\')">Retry Recovery</button>' +
                 '</div>';
         }
+        const baudOpts = [9600,19200,57600,74880,115200,230400,460800,921600].map(b =>
+            `<option value="${b}"${b === (s.baud_rate || 115200) ? ' selected' : ''}>${b}</option>`
+        ).join('');
+        const baudSel = `<select onchange="setBaudRate('${label}', this.value)">${baudOpts}</select>`;
+        const usbDevs = s.usb_devices || [];
+        const usbBaudHtml = usbDevs.length > 0
+            ? `<div class="usb-baud-row"><div>USB: <span>${usbDevs[0].product}</span></div><div>Baud: ${baudSel}</div></div>`
+              + usbDevs.slice(1).map(d => `<div>USB: <span>${d.product}</span></div>`).join('')
+            : `<div class="baud-row-right">Baud: ${baudSel}</div>`;
         return `
         <div class="slot ${st}">
             <div class="slot-header">
@@ -3146,18 +3158,11 @@ function renderSlots(slots) {
                 <div class="status ${st}">${statusLabel(s)}</div>
             </div>
             <div class="slot-info">
-                <div>Port: <span>${s.tcp_port || '-'}</span></div>
-                <div>Device: <span>${s.devnode || 'None'}</span></div>
-                ${s.pid ? '<div>PID: <span>' + s.pid + '</span></div>' : ''}
+                <div>Port: <span>${s.tcp_port || '-'}</span> · Device: <span>${s.devnode || 'None'}</span>${s.pid ? ' · PID: <span>' + s.pid + '</span>' : ''}</div>
                 ${s.detected_chip ? '<div>Chip: <span>' + s.detected_chip + '</span></div>' : ''}
                 ${s.detected_chip && s.jtag_slot ? '<div>JTAG: <span>' + s.jtag_slot + (s.jtag_slot === label ? ' (built-in)' : ' (probe)') + '</span></div>' : (s.detected_chip ? '<div>JTAG: <span>none</span></div>' : '')}
                 ${s.debugging ? '<div class="debug-active">Debug: <span>GDB :' + s.debug_gdb_port + '</span></div>' : (s.detected_chip ? '<div class="debug-idle">Debug: <span>idle</span></div>' : '')}
-                ${(s.usb_devices || []).map(d => '<div class="usb-device">USB: <span>' + d.product + '</span></div>').join('')}
-                <div>Baud: <select onchange="setBaudRate('${label}', this.value)">${
-                    [9600,19200,57600,74880,115200,230400,460800,921600].map(b =>
-                        `<option value="${b}"${b === (s.baud_rate || 115200) ? ' selected' : ''}>${b}</option>`
-                    ).join('')
-                }</select></div>
+                ${usbBaudHtml}
             </div>
             <div class="url-box ${s.running || st === 'idle' || st === 'download_mode' ? '' : 'empty'}"
                  onclick="${s.running || st === 'idle' ? "copyUrl('" + copyTarget + "',this)" : ''}">
