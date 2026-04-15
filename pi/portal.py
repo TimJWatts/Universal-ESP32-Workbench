@@ -2815,7 +2815,7 @@ _UI_HTML = """\
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             background: #1a1a2e;
             color: #eee;
-            min-height: 100vh;
+            height: 100vh;
             padding: 20px;
             display: flex; flex-direction: column;
         }
@@ -2830,6 +2830,7 @@ _UI_HTML = """\
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
             gap: 20px;
+            flex-shrink: 0;
         }
         .slot {
             background: #16213e; border-radius: 12px; padding: 20px;
@@ -2993,7 +2994,7 @@ _UI_HTML = """\
         }
         .human-modal .btn-cancel:hover { background: #666; }
         /* Test progress panel */
-        .test-section { margin: 20px 0 0; }
+        .test-section { margin: 20px 0 0; flex-shrink: 0; }
         .test-progress { background: #16213e; border-radius: 12px; padding: 20px; border: 2px solid #0f3460; }
         .test-header { font-size: 1.1em; color: #e0e0e0; margin-bottom: 10px; }
         .test-bar-container { background: #333; border-radius: 6px; height: 24px; margin-bottom: 12px; position: relative; overflow: hidden; }
