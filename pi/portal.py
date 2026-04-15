@@ -2816,6 +2816,7 @@ _UI_HTML = """\
             background: #1a1a2e;
             color: #eee;
             height: 100vh;
+            overflow: hidden;
             padding: 20px;
             display: flex; flex-direction: column;
         }
@@ -3457,11 +3458,39 @@ async function setBaudRate(label, baud) {
     } catch (e) { /* ignore */ }
 }
 
+function sizeLogEntries() {
+    const entries = document.getElementById('log-entries');
+    if (!entries) return;
+    const saved = entries.scrollTop;
+    // Collapse to 0 so it doesn't influence measurements, force reflow,
+    // then read the true viewport position of this element.
+    entries.style.flex = 'none';
+    entries.style.height = '0px';
+    void entries.offsetHeight;
+    const r = entries.getBoundingClientRect();
+    // Measure space taken by siblings after entries inside log-section
+    const section = entries.closest('.log-section');
+    const sCS = getComputedStyle(section);
+    let below = parseFloat(sCS.paddingBottom) || 0;
+    let seen = false;
+    for (const c of section.children) {
+        if (c === entries) { seen = true; continue; }
+        if (!seen) continue;
+        const cs = getComputedStyle(c);
+        below += (parseFloat(cs.marginTop) || 0) + c.offsetHeight;
+    }
+    entries.style.height = Math.max(window.innerHeight - r.top - below, 80) + 'px';
+    entries.scrollTop = saved;
+}
+window.addEventListener('resize', sizeLogEntries);
+
 async function refresh() {
     await Promise.all([fetchDevices(), fetchActiveSource(), fetchHuman(), fetchTestProgress()]);
+    sizeLogEntries();
 }
 refresh();
 setInterval(refresh, 5000);
+sizeLogEntries();
 </script>
 </body>
 </html>
