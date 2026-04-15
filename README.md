@@ -228,7 +228,10 @@ A browser-based dashboard at **http://pi-ip:8080** showing all 3 serial slots, W
 - Detected chip type (e.g., ESP32-C6) when identified via JTAG
 - Debug status (active GDB port or idle)
 - USB devices on this physical port (including non-serial devices like HID keyboards)
-- Device node, PID
+- Port, device node, and PID on one line; baud rate selector inline with the USB device name
+- Per-slot baud rate selector (9600–921600) — changes take effect immediately without restarting the session
+
+The activity log fills the remaining viewport height and scrolls internally — no browser-level scrollbar. A **Refresh** dropdown in the top-right corner lets you set the polling rate from 1–10 seconds; the selection is remembered across reloads via `localStorage`.
 
 ---
 
@@ -426,6 +429,7 @@ curl -X POST http://workbench.local:8080/api/cw/stop
 | POST | `/api/serial/monitor` | Read serial output with pattern match |
 | POST | `/api/serial/recover` | Manual flap recovery trigger `{"slot"}` |
 | POST | `/api/serial/release` | Release GPIO after flashing, reboot into firmware `{"slot"}` |
+| POST | `/api/serial/baudrate` | Change baud rate for a running proxy `{"slot", "baud"}` |
 | POST | `/api/enter-portal` | Connect to DUT's captive portal SoftAP, submit WiFi creds, start local AP `{"portal_ssid?", "ssid", "password?"}` |
 
 ### WiFi
